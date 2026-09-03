@@ -36,6 +36,11 @@ let gameState = {
   score: 0
 };
 
+// Get the HTML template
+function getGameHTML() {
+  return HtmlService.createTemplateFromFile('index').evaluate().getContent();
+}
+
 // Initialize the game
 function doGet() {
   gameState.map = createMap();
