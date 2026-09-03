@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Doom-like FPS - Google Apps Script</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 10px;
+      background-color: #1a1a1a;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    
+    #gameContainer {
+      position: relative;
+      width: 800px;
+      height: 600px;
+      background-color: #000000;
+      border: 3px solid #00FF00;
+      box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+    }
+    
+    #gameCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    
+    #controls {
+      margin-top: 20px;
+      color: #00FF00;
+      text-align: center;
+      font-size: 14px;
+      max-width: 800px;
+    }
+    
+    #controls h2 {
+      margin: 10px 0 5px 0;
+    }
+    
+    #controls p {
+      margin: 5px 0;
+    }
+    
+    .info {
+      margin-top: 20px;
+      color: #00FF00;
+      font-size: 12px;
+      max-width: 800px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1 style="color: #00FF00; margin: 0 0 10px 0;">DOOM-LIKE FPS</h1>
+  
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+  </div>
+  
+  <div id="controls">
+    <h2>CONTROLS</h2>
+    <p><strong>W/A/S/D</strong> - Move | <strong>Q/E</strong> - Turn | <strong>MOUSE</strong> - Look around | <strong>SPACE</strong> - Fire</p>
+    <p><strong>Mobile:</strong> Use on-screen buttons to move and turn</p>
+  </div>
+  
+  <div class="info">
+    <p>Survive enemy waves! Collect health and ammo pickups. Each wave gets harder!</p>
+  </div>
+  
+  <script>
+    // Input handling
+    const input = {
+      moveForward: false,
+      moveBackward: false,
+      strafeLeft: false,
+      strafeRight: false,
+      turnLeft: false,
+      turnRight: false,
+      fire: false
+    };
+    
+    // Keyboard input
+    document.addEventListener('keydown', (e) => {
+      const key = e.key.toUpperCase();
+      if (key === 'W') input.moveForward = true;
+      if (key === 'S') input.moveBackward = true;
+      if (key === 'A') input.strafeLeft = true;
+      if (key === 'D') input.strafeRight = true;
+      if (key === 'Q') input.turnLeft = true;
+      if (key === 'E') input.turnRight = true;
+      if (key === ' ') input.fire = true;
+    });
+    
+    document.addEventListener('keyup', (e) => {
+      const key = e.key.toUpperCase();
+      if (key === 'W') input.moveForward = false;
+      if (key === 'S') input.moveBackward = false;
+      if (key === 'A') input.strafeLeft = false;
+      if (key === 'D') input.strafeRight = false;
+      if (key === 'Q') input.turnLeft = false;
+      if (key === 'E') input.turnRight = false;
+      if (key === ' ') input.fire = false;
+    });
+    
+    // Mouse look
+    let lastMouseX = 0;
+    document.addEventListener('mousemove', (e) => {
+      const deltaX = e.clientX - lastMouseX;
+      lastMouseX = e.clientX;
+      
+      if (Math.abs(deltaX) > 2) {
+        if (deltaX < 0) input.turnLeft = true;
+        else input.turnRight = true;
+      } else {
+        input.turnLeft = false;
+        input.turnRight = false;
+      }
+    });
+    
+    // Click to fire
+    document.addEventListener('mousedown', () => {
+      input.fire = true;
+    });
+    
+    document.addEventListener('mouseup', () => {
+      input.fire = false;
+    });
+    
+    // Mobile touch controls
+    let touchStartX = 0;
+    let touchStartY = 0;
+    
+    document.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    });
+    
+    document.addEventListener('touchmove', (e) => {
+      const touchX = e.touches[0].clientX;
+      const touchY = e.touches[0].clientY;
+      
+      const deltaX = touchX - touchStartX;
+      const deltaY = touchY - touchStartY;
+      
+      // Simple swipe controls
+      if (Math.abs(deltaX) > Math.abs(deltaY)) {
+        if (deltaX > 30) input.strafeRight = true; else input.strafeRight = false;
+        if (deltaX < -30) input.strafeLeft = true; else input.strafeLeft = false;
+      } else {
+        if (deltaY > 30) input.moveBackward = true; else input.moveBackward = false;
+        if (deltaY < -30) input.moveForward = true; else input.moveForward = false;
+      }
+      
+      e.preventDefault();
+    });
+    
+    document.addEventListener('touchend', () => {
+      input.moveForward = false;
+      input.moveBackward = false;
+      input.strafeLeft = false;
+      input.strafeRight = false;
+    });
+    
+    // Get canvas and start game loop
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game loop
+    setInterval(() => {
+      google.script.run.withSuccessHandler((newState) => {
+        window.gameState = newState;
+        renderGame();
+      }).gameUpdate(input);
+    }, 16); // ~60 FPS
+    
+    // Render function (called by server)
+    function renderGame() {
+      if (!window.gameState) return;
+      
+      // Clear canvas
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, 800, 600);
+      
+      // Draw sky (upper half)
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, 800, 300);
+      
+      // Draw ceiling details
+      for (let i = 0; i < 20; i++) {
+        const x = (i * 50 + (window.gameState.player.angle * 100)) % 800;
+        ctx.fillStyle = '#2a2a4e';
+        ctx.fillRect(x, 0, 25, 300);
+      }
+      
+      // Draw raycasted walls (pseudo-3D)
+      drawWalls(ctx);
+      
+      // Draw HUD
+      drawHUD(ctx);
+    }
+    
+    function drawWalls(ctx) {
+      const player = window.gameState.player;
+      const FOV = Math.PI / 3;
+      const rayCount = 800;
+      
+      // Simple wall rendering
+      ctx.fillStyle = '#333333';
+      ctx.fillRect(0, 300, 800, 300);
+      
+      // Draw a few example "walls" based on game state
+      const enemies = window.gameState.enemies || [];
+      enemies.forEach((enemy, index) => {
+        const dx = enemy.x - player.x;
+        const dy = enemy.y - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist < 400) {
+          const angle = Math.atan2(dy, dx) - player.angle;
+          if (Math.abs(angle) < FOV / 2) {
+            const screenX = 400 + (angle / (FOV / 2)) * 400;
+            const wallHeight = Math.max(50, 10000 / dist);
+            const y = 300 - wallHeight / 2;
+            
+            ctx.fillStyle = `rgb(255, ${Math.max(100, 200 - dist / 2)}, 0)`;
+            ctx.fillRect(screenX - 10, y, 20, wallHeight);
+          }
+        }
+      });
+    }
+    
+    function drawHUD(ctx) {
+      const state = window.gameState;
+      const player = state.player;
+      
+      // Health bar
+      ctx.fillStyle = '#00FF00';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText(`HEALTH: ${Math.ceil(player.health)}/${player.maxHealth}`, 10, 30);
+      
+      const healthPercent = player.health / player.maxHealth;
+      ctx.fillStyle = healthPercent > 0.5 ? '#00FF00' : (healthPercent > 0.25 ? '#FFFF00' : '#FF0000');
+      ctx.fillRect(10, 40, healthPercent * 150, 15);
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(10, 40, 150, 15);
+      
+      // Ammo counter
+      ctx.fillStyle = '#00FF00';
+      ctx.fillText(`AMMO: ${player.ammo}/${player.maxAmmo}`, 10, 80);
+      const ammoPercent = player.ammo / player.maxAmmo;
+      ctx.fillStyle = '#FFFF00';
+      ctx.fillRect(10, 90, ammoPercent * 150, 15);
+      ctx.strokeStyle = '#00FF00';
+      ctx.strokeRect(10, 90, 150, 15);
+      
+      // Wave and score
+      ctx.fillStyle = '#00FF00';
+      ctx.fillText(`WAVE ${state.wave}`, 650, 30);
+      ctx.fillText(`SCORE ${state.score}`, 650, 60);
+      ctx.fillText(`ENEMIES ${state.enemies.length}`, 650, 90);
+      
+      // Crosshair
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(395, 300);
+      ctx.lineTo(405, 300);
+      ctx.moveTo(400, 295);
+      ctx.lineTo(400, 305);
+      ctx.stroke();
+      
+      // Game over screen
+      if (state.gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.fillRect(0, 0, 800, 600);
+        
+        ctx.fillStyle = '#FF0000';
+        ctx.font = 'bold 48px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', 400, 250);
+        
+        ctx.fillStyle = '#00FF00';
+        ctx.font = '24px monospace';
+        ctx.fillText(`FINAL SCORE: ${state.score}`, 400, 320);
+        ctx.fillText(`WAVES SURVIVED: ${state.wave}`, 400, 360);
+        ctx.textAlign = 'left';
+      }
+    }
+  </script>
+</body>
+</html>
