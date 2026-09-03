@@ -4,9 +4,13 @@
   <meta charset="utf-8">
   <title>Doom-like FPS - Google Apps Script</title>
   <style>
-    body {
+    * {
       margin: 0;
-      padding: 10px;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
       background-color: #1a1a1a;
       font-family: Arial, sans-serif;
       display: flex;
@@ -14,6 +18,13 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
+      padding: 10px;
+    }
+    
+    h1 {
+      color: #00FF00;
+      margin-bottom: 10px;
+      text-shadow: 0 0 10px #00FF00;
     }
     
     #gameContainer {
@@ -23,6 +34,7 @@
       background-color: #000000;
       border: 3px solid #00FF00;
       box-shadow: 0 0 20px rgba(0, 255, 0, 0.5);
+      overflow: hidden;
     }
     
     #gameCanvas {
@@ -41,6 +53,7 @@
     
     #controls h2 {
       margin: 10px 0 5px 0;
+      text-shadow: 0 0 5px #00FF00;
     }
     
     #controls p {
@@ -57,7 +70,7 @@
   </style>
 </head>
 <body>
-  <h1 style="color: #00FF00; margin: 0 0 10px 0;">DOOM-LIKE FPS</h1>
+  <h1>DOOM-LIKE FPS</h1>
   
   <div id="gameContainer">
     <canvas id="gameCanvas" width="800" height="600"></canvas>
@@ -65,16 +78,26 @@
   
   <div id="controls">
     <h2>CONTROLS</h2>
-    <p><strong>W/A/S/D</strong> - Move | <strong>Q/E</strong> - Turn | <strong>MOUSE</strong> - Look around | <strong>SPACE</strong> - Fire</p>
-    <p><strong>Mobile:</strong> Use on-screen buttons to move and turn</p>
+    <p><strong>W/A/S/D</strong> - Move | <strong>Q/E</strong> - Turn | <strong>MOUSE MOVE</strong> - Look | <strong>SPACE</strong> - Fire</p>
   </div>
   
   <div class="info">
     <p>Survive enemy waves! Collect health and ammo pickups. Each wave gets harder!</p>
   </div>
-  
+
   <script>
-    // Input handling
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game constants
+    const GAME_WIDTH = 800;
+    const GAME_HEIGHT = 600;
+    const PLAYER_SPEED = 150;
+    const PLAYER_ROTATION_SPEED = 180;
+    const FOV = Math.PI / 3;
+    const VIEW_DISTANCE = 800;
+
+    // Input state
     const input = {
       moveForward: false,
       moveBackward: false,
@@ -84,8 +107,201 @@
       turnRight: false,
       fire: false
     };
-    
-    // Keyboard input
+
+    // Game state
+    let gameState = null;
+    let lastUpdateTime = Date.now();
+
+    // Initialize game on load
+    function initGame() {
+      google.script.run.withSuccessHandler((state) => {
+        gameState = state;
+        console.log('Game initialized:', gameState);
+        gameLoop();
+      }).initializeGame();
+    }
+
+    // Main game loop
+    function gameLoop() {
+      if (!gameState) {
+        setTimeout(gameLoop, 16);
+        return;
+      }
+
+      // Update game state
+      google.script.run.withSuccessHandler((newState) => {
+        gameState = newState;
+        renderGame();
+        setTimeout(gameLoop, 16);
+      }).gameUpdate(input);
+    }
+
+    // Render the game
+    function renderGame() {
+      // Clear canvas
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+      if (!gameState || !gameState.player) {
+        ctx.fillStyle = '#00FF00';
+        ctx.font = '20px Arial';
+        ctx.fillText('Loading...', 350, 300);
+        return;
+      }
+
+      // Draw sky
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT / 2);
+
+      // Draw floor
+      ctx.fillStyle = '#2d2d3d';
+      ctx.fillRect(0, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT / 2);
+
+      // Draw walls and enemies
+      drawView();
+
+      // Draw HUD
+      drawHUD();
+
+      // Draw game over if needed
+      if (gameState.gameOver) {
+        drawGameOver();
+      }
+    }
+
+    function drawView() {
+      const player = gameState.player;
+      const rayCount = GAME_WIDTH;
+
+      for (let i = 0; i < rayCount; i++) {
+        const rayAngle = player.angle - FOV / 2 + (i / rayCount) * FOV;
+        const hit = castRay(player, rayAngle);
+
+        if (hit) {
+          const distance = hit.distance;
+          const wallHeight = Math.min((GAME_HEIGHT * 50) / Math.max(distance, 1), GAME_HEIGHT);
+          const y = (GAME_HEIGHT - wallHeight) / 2;
+
+          // Draw wall
+          let brightness = Math.max(50, 255 - distance);
+          let color = `rgb(${brightness}, ${brightness}, ${brightness})`;
+
+          ctx.fillStyle = color;
+          ctx.fillRect(i, y, 1, wallHeight);
+
+          // Draw enemy sprite if hit
+          if (hit.enemy) {
+            const width = wallHeight * 0.6;
+            const spriteX = i - width / 2;
+            ctx.fillStyle = `rgb(255, ${Math.max(100, 200 - distance / 2)}, 0)`;
+            ctx.fillRect(spriteX, y, width, wallHeight);
+          }
+        }
+      }
+    }
+
+    function castRay(player, angle) {
+      const step = 2;
+      let distance = 0;
+      let currentX = player.x;
+      let currentY = player.y;
+
+      while (distance < VIEW_DISTANCE) {
+        currentX += Math.cos(angle) * step;
+        currentY += Math.sin(angle) * step;
+        distance += step;
+
+        // Check wall collision
+        if (gameState.map && checkWallCollisionAtPoint(currentX, currentY)) {
+          return { distance, wall: true };
+        }
+
+        // Check enemy collision
+        for (let enemy of gameState.enemies) {
+          const dx = currentX - enemy.x;
+          const dy = currentY - enemy.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 20) {
+            return { distance, enemy: true };
+          }
+        }
+      }
+
+      return null;
+    }
+
+    function checkWallCollisionAtPoint(x, y) {
+      if (!gameState.map) return false;
+      const map = gameState.map;
+      const gridSize = map.gridSize;
+      const gridX = Math.floor(x / gridSize);
+      const gridY = Math.floor(y / gridSize);
+
+      if (gridX < 0 || gridX >= map.width || gridY < 0 || gridY >= map.height) {
+        return true;
+      }
+
+      return map.tiles[gridY] && map.tiles[gridY][gridX] === 1;
+    }
+
+    function drawHUD() {
+      const player = gameState.player;
+
+      // Health bar
+      ctx.fillStyle = '#00FF00';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText(`HEALTH: ${Math.ceil(player.health)}/${player.maxHealth}`, 10, 30);
+
+      const healthPercent = player.health / player.maxHealth;
+      ctx.fillStyle = healthPercent > 0.5 ? '#00FF00' : (healthPercent > 0.25 ? '#FFFF00' : '#FF0000');
+      ctx.fillRect(10, 40, healthPercent * 150, 15);
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(10, 40, 150, 15);
+
+      // Ammo counter
+      ctx.fillStyle = '#00FF00';
+      ctx.fillText(`AMMO: ${player.ammo}/${player.maxAmmo}`, 10, 80);
+      const ammoPercent = player.ammo / player.maxAmmo;
+      ctx.fillStyle = '#FFFF00';
+      ctx.fillRect(10, 90, ammoPercent * 150, 15);
+      ctx.strokeStyle = '#00FF00';
+      ctx.strokeRect(10, 90, 150, 15);
+
+      // Wave and score
+      ctx.fillStyle = '#00FF00';
+      ctx.fillText(`WAVE ${gameState.wave}`, GAME_WIDTH - 200, 30);
+      ctx.fillText(`SCORE ${gameState.score}`, GAME_WIDTH - 200, 60);
+      ctx.fillText(`ENEMIES ${gameState.enemies.length}`, GAME_WIDTH - 200, 90);
+
+      // Crosshair
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(GAME_WIDTH / 2 - 10, GAME_HEIGHT / 2);
+      ctx.lineTo(GAME_WIDTH / 2 + 10, GAME_HEIGHT / 2);
+      ctx.moveTo(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 10);
+      ctx.lineTo(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 10);
+      ctx.stroke();
+    }
+
+    function drawGameOver() {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+      ctx.fillStyle = '#FF0000';
+      ctx.font = 'bold 48px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('GAME OVER', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40);
+
+      ctx.fillStyle = '#00FF00';
+      ctx.font = '24px monospace';
+      ctx.fillText(`FINAL SCORE: ${gameState.score}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 20);
+      ctx.fillText(`WAVES SURVIVED: ${gameState.wave}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 60);
+      ctx.textAlign = 'left';
+    }
+
+    // Input handling
     document.addEventListener('keydown', (e) => {
       const key = e.key.toUpperCase();
       if (key === 'W') input.moveForward = true;
@@ -94,9 +310,9 @@
       if (key === 'D') input.strafeRight = true;
       if (key === 'Q') input.turnLeft = true;
       if (key === 'E') input.turnRight = true;
-      if (key === ' ') input.fire = true;
+      if (key === ' ') { input.fire = true; e.preventDefault(); }
     });
-    
+
     document.addEventListener('keyup', (e) => {
       const key = e.key.toUpperCase();
       if (key === 'W') input.moveForward = false;
@@ -107,192 +323,28 @@
       if (key === 'E') input.turnRight = false;
       if (key === ' ') input.fire = false;
     });
-    
-    // Mouse look
+
     let lastMouseX = 0;
     document.addEventListener('mousemove', (e) => {
       const deltaX = e.clientX - lastMouseX;
       lastMouseX = e.clientX;
-      
-      if (Math.abs(deltaX) > 2) {
-        if (deltaX < 0) input.turnLeft = true;
-        else input.turnRight = true;
-      } else {
-        input.turnLeft = false;
-        input.turnRight = false;
-      }
+
+      input.turnLeft = false;
+      input.turnRight = false;
+      if (deltaX < -2) input.turnLeft = true;
+      if (deltaX > 2) input.turnRight = true;
     });
-    
-    // Click to fire
+
     document.addEventListener('mousedown', () => {
       input.fire = true;
     });
-    
+
     document.addEventListener('mouseup', () => {
       input.fire = false;
     });
-    
-    // Mobile touch controls
-    let touchStartX = 0;
-    let touchStartY = 0;
-    
-    document.addEventListener('touchstart', (e) => {
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-    });
-    
-    document.addEventListener('touchmove', (e) => {
-      const touchX = e.touches[0].clientX;
-      const touchY = e.touches[0].clientY;
-      
-      const deltaX = touchX - touchStartX;
-      const deltaY = touchY - touchStartY;
-      
-      // Simple swipe controls
-      if (Math.abs(deltaX) > Math.abs(deltaY)) {
-        if (deltaX > 30) input.strafeRight = true; else input.strafeRight = false;
-        if (deltaX < -30) input.strafeLeft = true; else input.strafeLeft = false;
-      } else {
-        if (deltaY > 30) input.moveBackward = true; else input.moveBackward = false;
-        if (deltaY < -30) input.moveForward = true; else input.moveForward = false;
-      }
-      
-      e.preventDefault();
-    });
-    
-    document.addEventListener('touchend', () => {
-      input.moveForward = false;
-      input.moveBackward = false;
-      input.strafeLeft = false;
-      input.strafeRight = false;
-    });
-    
-    // Get canvas and start game loop
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    
-    // Game loop
-    setInterval(() => {
-      google.script.run.withSuccessHandler((newState) => {
-        window.gameState = newState;
-        renderGame();
-      }).gameUpdate(input);
-    }, 16); // ~60 FPS
-    
-    // Render function (called by server)
-    function renderGame() {
-      if (!window.gameState) return;
-      
-      // Clear canvas
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, 800, 600);
-      
-      // Draw sky (upper half)
-      ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(0, 0, 800, 300);
-      
-      // Draw ceiling details
-      for (let i = 0; i < 20; i++) {
-        const x = (i * 50 + (window.gameState.player.angle * 100)) % 800;
-        ctx.fillStyle = '#2a2a4e';
-        ctx.fillRect(x, 0, 25, 300);
-      }
-      
-      // Draw raycasted walls (pseudo-3D)
-      drawWalls(ctx);
-      
-      // Draw HUD
-      drawHUD(ctx);
-    }
-    
-    function drawWalls(ctx) {
-      const player = window.gameState.player;
-      const FOV = Math.PI / 3;
-      const rayCount = 800;
-      
-      // Simple wall rendering
-      ctx.fillStyle = '#333333';
-      ctx.fillRect(0, 300, 800, 300);
-      
-      // Draw a few example "walls" based on game state
-      const enemies = window.gameState.enemies || [];
-      enemies.forEach((enemy, index) => {
-        const dx = enemy.x - player.x;
-        const dy = enemy.y - player.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        
-        if (dist < 400) {
-          const angle = Math.atan2(dy, dx) - player.angle;
-          if (Math.abs(angle) < FOV / 2) {
-            const screenX = 400 + (angle / (FOV / 2)) * 400;
-            const wallHeight = Math.max(50, 10000 / dist);
-            const y = 300 - wallHeight / 2;
-            
-            ctx.fillStyle = `rgb(255, ${Math.max(100, 200 - dist / 2)}, 0)`;
-            ctx.fillRect(screenX - 10, y, 20, wallHeight);
-          }
-        }
-      });
-    }
-    
-    function drawHUD(ctx) {
-      const state = window.gameState;
-      const player = state.player;
-      
-      // Health bar
-      ctx.fillStyle = '#00FF00';
-      ctx.font = 'bold 16px monospace';
-      ctx.fillText(`HEALTH: ${Math.ceil(player.health)}/${player.maxHealth}`, 10, 30);
-      
-      const healthPercent = player.health / player.maxHealth;
-      ctx.fillStyle = healthPercent > 0.5 ? '#00FF00' : (healthPercent > 0.25 ? '#FFFF00' : '#FF0000');
-      ctx.fillRect(10, 40, healthPercent * 150, 15);
-      ctx.strokeStyle = '#00FF00';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(10, 40, 150, 15);
-      
-      // Ammo counter
-      ctx.fillStyle = '#00FF00';
-      ctx.fillText(`AMMO: ${player.ammo}/${player.maxAmmo}`, 10, 80);
-      const ammoPercent = player.ammo / player.maxAmmo;
-      ctx.fillStyle = '#FFFF00';
-      ctx.fillRect(10, 90, ammoPercent * 150, 15);
-      ctx.strokeStyle = '#00FF00';
-      ctx.strokeRect(10, 90, 150, 15);
-      
-      // Wave and score
-      ctx.fillStyle = '#00FF00';
-      ctx.fillText(`WAVE ${state.wave}`, 650, 30);
-      ctx.fillText(`SCORE ${state.score}`, 650, 60);
-      ctx.fillText(`ENEMIES ${state.enemies.length}`, 650, 90);
-      
-      // Crosshair
-      ctx.strokeStyle = '#00FF00';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(395, 300);
-      ctx.lineTo(405, 300);
-      ctx.moveTo(400, 295);
-      ctx.lineTo(400, 305);
-      ctx.stroke();
-      
-      // Game over screen
-      if (state.gameOver) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-        ctx.fillRect(0, 0, 800, 600);
-        
-        ctx.fillStyle = '#FF0000';
-        ctx.font = 'bold 48px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('GAME OVER', 400, 250);
-        
-        ctx.fillStyle = '#00FF00';
-        ctx.font = '24px monospace';
-        ctx.fillText(`FINAL SCORE: ${state.score}`, 400, 320);
-        ctx.fillText(`WAVES SURVIVED: ${state.wave}`, 400, 360);
-        ctx.textAlign = 'left';
-      }
-    }
+
+    // Start the game
+    window.addEventListener('load', initGame);
   </script>
 </body>
 </html>
